@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import * as Octokit from '@octokit/rest';
+import {Constants} from './constants';
 
 type Issue = Octokit.IssuesListForRepoResponseItem;
 type IssueLabel = Octokit.IssuesListForRepoResponseItemLabelsItem;
@@ -16,6 +17,8 @@ type Args = {
   stalePrLabel: string;
   exemptPrLabel: string;
   operationsPerRun: number;
+  lastUpdatedUserType: string;
+  onlyLabels: string;
 };
 
 async function run() {
@@ -41,7 +44,8 @@ async function processIssues(
     repo: github.context.repo.repo,
     state: 'open',
     per_page: 100,
-    page: page
+    page: page,
+    labels: args.onlyLabels
   });
 
   operationsLeft -= 1;
@@ -67,17 +71,39 @@ async function processIssues(
       continue;
     } else if (isLabeled(issue, staleLabel)) {
       if (wasLastUpdatedBefore(issue, args.daysBeforeClose)) {
-        operationsLeft -= await closeIssue(client, issue);
+        var lastCommentFilterResult = await wasLastUpdatedByGivenUserType(
+          client,
+          issue,
+          args.lastUpdatedUserType
+        );
+        operationsLeft -= lastCommentFilterResult.operations;
+        if (lastCommentFilterResult.result) {
+          operationsLeft -= await closeIssue(client, issue);
+        } else {
+          core.debug(`Not match last-commented-user-filter. Skipping close.`);
+        }
       } else {
         continue;
       }
     } else if (wasLastUpdatedBefore(issue, args.daysBeforeStale)) {
-      operationsLeft -= await markStale(
+      var lastCommentFilterResult = await wasLastUpdatedByGivenUserType(
         client,
         issue,
-        staleMessage,
-        staleLabel
+        args.lastUpdatedUserType
       );
+      operationsLeft -= lastCommentFilterResult.operations;
+      if (lastCommentFilterResult.result) {
+        operationsLeft -= await markStale(
+          client,
+          issue,
+          staleMessage,
+          staleLabel
+        );
+      } else {
+        core.debug(
+          `Not match last-commented-user-filter. Skipping mark stale.`
+        );
+      }
     }
 
     if (operationsLeft <= 0) {
@@ -101,6 +127,78 @@ function wasLastUpdatedBefore(issue: Issue, num_days: number): boolean {
   const millisSinceLastUpdated =
     new Date().getTime() - new Date(issue.updated_at).getTime();
   return millisSinceLastUpdated >= daysInMillis;
+}
+
+async function wasLastUpdatedByGivenUserType(
+  client: github.GitHub,
+  issue: Issue,
+  lastUpdatedUserType: string
+): Promise<{result: boolean; operations: number}> {
+  var operationNumber = 0;
+  if (
+    !lastUpdatedUserType ||
+    Constants.AvailableLastCommentedUserTypes.indexOf(lastUpdatedUserType) ===
+      -1
+  ) {
+    core.debug(
+      'Last comment user type is not set or not valid. Skip last updated user type filter.'
+    );
+    return {result: true, operations: operationNumber};
+  }
+
+  const comments = await client.issues.listComments({
+    owner: github.context.repo.owner,
+    repo: github.context.repo.repo,
+    issue_number: issue.number
+  });
+  operationNumber++;
+  let latestCommentAuthor = '';
+  if (comments.data.length == 0) {
+    latestCommentAuthor = issue.user.login;
+  } else {
+    const latestComment = comments.data.reduce((prev, current) =>
+      prev.updated_at > current.updated_at ? prev : current
+    );
+    latestCommentAuthor = latestComment.user.login;
+  }
+
+  try {
+    operationNumber++;
+    const isCollaborator = await client.repos.checkCollaborator({
+      owner: github.context.repo.owner,
+      repo: github.context.repo.repo,
+      username: latestCommentAuthor
+    });
+    if (isCollaborator.status === 204) {
+      return {
+        result:
+          lastUpdatedUserType === Constants.UserType.Collaborator
+            ? true
+            : false,
+        operations: operationNumber
+      };
+    } else {
+      core.debug(
+        'Unexpected status code from check collaborator api. Skip last updated user type filter.'
+      );
+      return {
+        result: true,
+        operations: operationNumber
+      };
+    }
+  } catch (error) {
+    if (error.status === 404) {
+      return {
+        result:
+          lastUpdatedUserType !== Constants.UserType.Collaborator
+            ? true
+            : false,
+        operations: operationNumber
+      };
+    } else {
+      throw error;
+    }
+  }
 }
 
 async function markStale(
@@ -161,7 +259,9 @@ function getAndValidateArgs(): Args {
     exemptPrLabel: core.getInput('exempt-pr-label'),
     operationsPerRun: parseInt(
       core.getInput('operations-per-run', {required: true})
-    )
+    ),
+    lastUpdatedUserType: core.getInput('last-updated-user-type'),
+    onlyLabels: core.getInput('only-labels')
   };
 
   for (var numberInput of [

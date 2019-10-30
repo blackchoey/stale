@@ -28,6 +28,10 @@ inputs:
   operations-per-run:
     description: 'The maximum number of operations per run, used to control rate limiting'
     default: 30
+  last-updated-user-type:
+    description: 'Only stale and close issue or pull request that last updated by given user type. Available value: collaborator, non-collaborator. Leave blank to disable this filter.'
+  only-labels:
+    description: 'Comma separated label names. Only issues or pull requests with all of these labels are check if stale. Leave blank to disable this filter.'
 runs:
   using: 'node12'
   main: 'lib/main.js'
