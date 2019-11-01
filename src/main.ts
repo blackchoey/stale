@@ -146,20 +146,20 @@ async function wasLastUpdatedByGivenUserType(
     return {result: true, operations: operationNumber};
   }
 
-  const comments = await client.issues.listComments({
+  const events = await client.issues.listEvents({
     owner: github.context.repo.owner,
     repo: github.context.repo.repo,
     issue_number: issue.number
   });
   operationNumber++;
-  let latestCommentAuthor = '';
-  if (comments.data.length == 0) {
-    latestCommentAuthor = issue.user.login;
+  let latestEventActor = '';
+  if (events.data.length == 0) {
+    latestEventActor = issue.user.login;
   } else {
-    const latestComment = comments.data.reduce((prev, current) =>
-      prev.updated_at > current.updated_at ? prev : current
+    const latestEvent = events.data.reduce((prev, current) =>
+      prev.created_at > current.created_at ? prev : current
     );
-    latestCommentAuthor = latestComment.user.login;
+    latestEventActor = latestEvent.actor.login;
   }
 
   try {
@@ -167,7 +167,7 @@ async function wasLastUpdatedByGivenUserType(
     const isCollaborator = await client.repos.checkCollaborator({
       owner: github.context.repo.owner,
       repo: github.context.repo.repo,
-      username: latestCommentAuthor
+      username: latestEventActor
     });
     if (isCollaborator.status === 204) {
       return {
