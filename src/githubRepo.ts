@@ -75,7 +75,7 @@ export class GithubRepo {
             const allEvents = await this.getAllEventsForIssue(issue);
             operations += allEvents.operations;
             core.debug("initial event length:"+allEvents.result.length);
-            issueTimeline.concat(...allEvents.result);
+            issueTimeline.push(...allEvents.result)
         }
 
         core.debug("issue timeline length:"+issueTimeline.length);
