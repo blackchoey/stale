@@ -1,7 +1,8 @@
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import * as Octokit from '@octokit/rest';
-import {Constants} from './constants';
+import { Constants } from './constants';
+import { GithubRepo } from './githubRepo';
 
 type Issue = Octokit.IssuesListForRepoResponseItem;
 type IssueLabel = Octokit.IssuesListForRepoResponseItemLabelsItem;
@@ -19,6 +20,7 @@ type Args = {
   operationsPerRun: number;
   lastUpdatedUserType: string;
   onlyLabels: string;
+  eventsForCollaborators: string;
 };
 
 async function run() {
@@ -26,6 +28,8 @@ async function run() {
     const args = getAndValidateArgs();
 
     const client = new github.GitHub(args.repoToken);
+    core.debug(`Event list: ${args.eventsForCollaborators}`)
+    // const githubRepo = new GithubRepo(client, args.eventsForCollaborators);
     await processIssues(client, args, args.operationsPerRun);
   } catch (error) {
     core.error(error);
@@ -118,7 +122,7 @@ async function processIssues(
 
 function isLabeled(issue: Issue, label: string): boolean {
   const labelComparer: (l: IssueLabel) => boolean = l =>
-    label.localeCompare(l.name, undefined, {sensitivity: 'accent'}) === 0;
+    label.localeCompare(l.name, undefined, { sensitivity: 'accent' }) === 0;
   return issue.labels.filter(labelComparer).length > 0;
 }
 
@@ -133,17 +137,17 @@ async function wasLastUpdatedByGivenUserType(
   client: github.GitHub,
   issue: Issue,
   lastUpdatedUserType: string
-): Promise<{result: boolean; operations: number}> {
+): Promise<{ result: boolean; operations: number }> {
   var operationNumber = 0;
   if (
     !lastUpdatedUserType ||
     Constants.AvailableLastCommentedUserTypes.indexOf(lastUpdatedUserType) ===
-      -1
+    -1
   ) {
     core.debug(
       'Last comment user type is not set or not valid. Skip last updated user type filter.'
     );
-    return {result: true, operations: operationNumber};
+    return { result: true, operations: operationNumber };
   }
 
   const events = await client.issues.listEvents({
@@ -244,24 +248,25 @@ async function closeIssue(
 
 function getAndValidateArgs(): Args {
   const args = {
-    repoToken: core.getInput('repo-token', {required: true}),
+    repoToken: core.getInput('repo-token', { required: true }),
     staleIssueMessage: core.getInput('stale-issue-message'),
     stalePrMessage: core.getInput('stale-pr-message'),
     daysBeforeStale: parseInt(
-      core.getInput('days-before-stale', {required: true})
+      core.getInput('days-before-stale', { required: true })
     ),
     daysBeforeClose: parseInt(
-      core.getInput('days-before-close', {required: true})
+      core.getInput('days-before-close', { required: true })
     ),
-    staleIssueLabel: core.getInput('stale-issue-label', {required: true}),
+    staleIssueLabel: core.getInput('stale-issue-label', { required: true }),
     exemptIssueLabel: core.getInput('exempt-issue-label'),
-    stalePrLabel: core.getInput('stale-pr-label', {required: true}),
+    stalePrLabel: core.getInput('stale-pr-label', { required: true }),
     exemptPrLabel: core.getInput('exempt-pr-label'),
     operationsPerRun: parseInt(
-      core.getInput('operations-per-run', {required: true})
+      core.getInput('operations-per-run', { required: true })
     ),
     lastUpdatedUserType: core.getInput('last-updated-user-type'),
-    onlyLabels: core.getInput('only-labels')
+    onlyLabels: core.getInput('only-labels'),
+    eventsForCollaborators: core.getInput('include-events-from-collaborators')
   };
 
   for (var numberInput of [
