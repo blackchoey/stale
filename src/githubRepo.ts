@@ -130,7 +130,9 @@ export class GithubRepo {
 
         let issueEvents: IssueEvent[] = [];
         for (var event of allEvents.result) {
+            core.debug("for loop");
             if (!this._ignoreEventsFromBot || event.actor.type !== "Bot") {
+                core.debug("non bot");
                 if (this._eventsToCheck.indexOf(event.event) !== -1) {
                     switch (event.event) {
                         case "assigned":
