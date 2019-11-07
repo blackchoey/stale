@@ -2,8 +2,6 @@ import * as github from '@actions/github';
 import * as Octokit from '@octokit/rest';
 import { IssueEvent } from './models/issueEvent';
 
-import * as core from '@actions/core'; //remove
-
 type Issue = Octokit.IssuesListForRepoResponseItem;
 
 // Cache GitHub repo related information and perfor 
@@ -17,9 +15,6 @@ export class GithubRepo {
         this._client = client;
         this._eventsToCheck = eventsToCheck;
         this._collaborators = [];
-        core.debug("events to check length: "+ this._eventsToCheck.length); //remove
-        core.debug("events to check:" + this._eventsToCheck.toString); //remove
-        core.debug("labeled:"+this._eventsToCheck.indexOf("labeled")); //remove
     }
 
     public async getAllIssuesForRepo(labels: string): Promise<{ result: Issue[], operations: number }> {
@@ -70,15 +65,12 @@ export class GithubRepo {
         const allComments = await this.getAllCommentsForIssue(issue);
         operations += allComments.operations;
         let issueTimeline = allComments.result;
-        core.debug("initial length:"+issueTimeline.length);
         if (this._eventsToCheck.length > 0) {
             const allEvents = await this.getAllEventsForIssue(issue);
             operations += allEvents.operations;
-            core.debug("initial event length:"+allEvents.result.length);
             issueTimeline.push(...allEvents.result)
         }
 
-        core.debug("issue timeline length:"+issueTimeline.length);
         const latestEvent = issueTimeline.reduce((prev, current) =>
             prev.eventTime > current.eventTime ? prev : current
         );
@@ -129,15 +121,10 @@ export class GithubRepo {
                 page: page
             })
         });
-        core.debug("event length:"+allEvents.result.length); //remove
 
         let issueEvents: IssueEvent[] = [];
         for (var event of allEvents.result) {
-            core.debug("for loop");
             if (!this._ignoreEventsFromBot || event.actor.type !== "Bot") {
-                core.debug("non bot");
-                core.debug("event name:"+event.event);
-                core.debug("check result:"+this._eventsToCheck.indexOf(event.event));
                 if (this._eventsToCheck.indexOf(event.event) !== -1) {
                     switch (event.event) {
                         case "assigned":
@@ -153,7 +140,6 @@ export class GithubRepo {
                 }
             }
         }
-        core.debug("filtered event length:"+issueEvents.length);
         return {
             result: issueEvents,
             operations: allEvents.operations
