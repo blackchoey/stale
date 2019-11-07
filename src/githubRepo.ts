@@ -2,6 +2,8 @@ import * as github from '@actions/github';
 import * as Octokit from '@octokit/rest';
 import { IssueEvent } from './models/issueEvent';
 
+import * as core from '@actions/core'; //remove
+
 type Issue = Octokit.IssuesListForRepoResponseItem;
 
 // Cache GitHub repo related information and perfor 
@@ -15,6 +17,9 @@ export class GithubRepo {
         this._client = client;
         this._eventsToCheck = eventsToCheck;
         this._collaborators = [];
+        core.debug("events to check length: "+ this._eventsToCheck.length); //remove
+        core.debug("events to check:" + this._eventsToCheck.toString); //remove
+        core.debug("labeled:"+this._eventsToCheck.indexOf("labeled")); //remove
     }
 
     public async getAllIssuesForRepo(labels: string): Promise<{ result: Issue[], operations: number }> {
@@ -121,6 +126,7 @@ export class GithubRepo {
                 page: page
             })
         });
+        core.debug("event length:"+allEvents.result.length); //remove
 
         let issueEvents: IssueEvent[] = [];
         for (var event of allEvents.result) {
