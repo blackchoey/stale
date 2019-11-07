@@ -70,10 +70,12 @@ export class GithubRepo {
         const allComments = await this.getAllCommentsForIssue(issue);
         operations += allComments.operations;
         let issueTimeline = allComments.result;
+        core.debug("initial length:"+issueTimeline.length);
         if (this._eventsToCheck.length > 0) {
             const allEvents = await this.getAllEventsForIssue(issue);
             operations += allEvents.operations;
-            issueTimeline.concat(allEvents.result);
+            core.debug("initial event length:"+allEvents.result.length);
+            issueTimeline.concat(...allEvents.result);
         }
 
         core.debug("issue timeline length:"+issueTimeline.length);
