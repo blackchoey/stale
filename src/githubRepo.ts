@@ -76,6 +76,7 @@ export class GithubRepo {
             issueTimeline.concat(allEvents.result);
         }
 
+        core.debug("issue timeline length:"+issueTimeline.length);
         const latestEvent = issueTimeline.reduce((prev, current) =>
             prev.eventTime > current.eventTime ? prev : current
         );
@@ -133,6 +134,8 @@ export class GithubRepo {
             core.debug("for loop");
             if (!this._ignoreEventsFromBot || event.actor.type !== "Bot") {
                 core.debug("non bot");
+                core.debug("event name:"+event.event);
+                core.debug("check result:"+this._eventsToCheck.indexOf(event.event));
                 if (this._eventsToCheck.indexOf(event.event) !== -1) {
                     switch (event.event) {
                         case "assigned":
@@ -148,6 +151,7 @@ export class GithubRepo {
                 }
             }
         }
+        core.debug("filtered event length:"+issueEvents.length);
         return {
             result: issueEvents,
             operations: allEvents.operations
