@@ -31,7 +31,8 @@ inputs:
   last-updated-user-type:
     description: 'Only stale and close issue or pull request that last updated by given user type. Available value: collaborator, non-collaborator. Leave blank to disable this filter.'
   include-events-from-collaborators:
-    description: 'When checking whether an issue or pull request is updated by collaborators, also check whether there are configured events from collaborators besides comments. Example: ['labeled','milestoned','referenced','assigned']. The action will try its best to figure out who actually triggered the event. Refer following document for full event names:https://developer.github.com/v3/issues/events/'
+    description: 'When checking whether an issue or pull request is updated by collaborators, also check whether there are configured events from collaborators besides comments. Example:'labeled,milestoned,referenced,assigned'. The action will try its best to figure out who actually triggered the event. Refer following document for full event names:https://developer.github.com/v3/issues/events/'
+    default: 'milestoned,demilestoned,labeled,unlabeled,marked_as_duplicate,unmarked_as_duplicate,referenced,assigned,unassigned,reopen,renamed,review_dismissed,review_requested,review_request_removed'
   only-labels:
     description: 'Comma separated label names. Only issues or pull requests with all of these labels are check if stale. Leave blank to disable this filter.'
 runs:

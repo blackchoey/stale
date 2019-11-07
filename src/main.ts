@@ -20,7 +20,7 @@ type Args = {
   operationsPerRun: number;
   lastUpdatedUserType: string;
   onlyLabels: string;
-  eventsForCollaborators: string;
+  eventsForCollaborators: string[];
 };
 
 async function run() {
@@ -28,9 +28,8 @@ async function run() {
     const args = getAndValidateArgs();
 
     const client = new github.GitHub(args.repoToken);
-    core.debug(`Event list: ${args.eventsForCollaborators}`)
-    // const githubRepo = new GithubRepo(client, args.eventsForCollaborators);
-    await processIssues(client, args, args.operationsPerRun);
+    const githubRepo = new GithubRepo(client, args.eventsForCollaborators);
+    await processIssues(githubRepo, args);
   } catch (error) {
     core.error(error);
     core.setFailed(error.message);
@@ -38,33 +37,31 @@ async function run() {
 }
 
 async function processIssues(
-  client: github.GitHub,
-  args: Args,
-  operationsLeft: number,
-  page: number = 1
-): Promise<number> {
-  const issues = await client.issues.listForRepo({
-    owner: github.context.repo.owner,
-    repo: github.context.repo.repo,
-    state: 'open',
-    per_page: 100,
-    page: page,
-    labels: args.onlyLabels
-  });
+  githubRepo: GithubRepo,
+  args: Args
+): Promise<void> {
+  let operationsLeft = args.operationsPerRun;
+  const issues = await githubRepo.getAllIssuesForRepo(args.onlyLabels);
 
-  operationsLeft -= 1;
+  operationsLeft -= issues.operations;
 
-  if (issues.data.length === 0 || operationsLeft === 0) {
-    return operationsLeft;
+  if (issues.result.length === 0) {
+    core.debug(`No open issues found with configured filter.`);
+    return;
   }
 
-  for (var issue of issues.data.values()) {
-    core.debug(`found issue: ${issue.title} last updated ${issue.updated_at}`);
+  if (operationsLeft <= 0) {
+    core.debug(`Reaches max operations limit after list all issues. Please increase the operations-per-run.`);
+    return;
+  }
+
+  for (var issue of issues.result.values()) {
+    core.debug(`Found issue: ${issue.title} last updated ${issue.updated_at}`);
     let isPr = !!issue.pull_request;
 
     let staleMessage = isPr ? args.stalePrMessage : args.staleIssueMessage;
     if (!staleMessage) {
-      core.debug(`skipping ${isPr ? 'pr' : 'issue'} due to empty message`);
+      core.debug(`Skipping ${isPr ? 'pr' : 'issue'} due to empty message`);
       continue;
     }
 
@@ -72,52 +69,50 @@ async function processIssues(
     let exemptLabel = isPr ? args.exemptPrLabel : args.exemptIssueLabel;
 
     if (exemptLabel && isLabeled(issue, exemptLabel)) {
+      core.debug(`Found exempt label for issue ${issue.title}. Skip processing.`)
       continue;
     } else if (isLabeled(issue, staleLabel)) {
       if (wasLastUpdatedBefore(issue, args.daysBeforeClose)) {
         var lastCommentFilterResult = await wasLastUpdatedByGivenUserType(
-          client,
+          githubRepo,
           issue,
           args.lastUpdatedUserType
         );
         operationsLeft -= lastCommentFilterResult.operations;
         if (lastCommentFilterResult.result) {
-          operationsLeft -= await closeIssue(client, issue);
+          operationsLeft -= await githubRepo.closeIssue(issue);
         } else {
-          core.debug(`Not match last-commented-user-filter. Skipping close.`);
+          core.debug(`Not match last-updated-user-type. Skip closing.`);
         }
       } else {
         continue;
       }
     } else if (wasLastUpdatedBefore(issue, args.daysBeforeStale)) {
       var lastCommentFilterResult = await wasLastUpdatedByGivenUserType(
-        client,
+        githubRepo,
         issue,
         args.lastUpdatedUserType
       );
       operationsLeft -= lastCommentFilterResult.operations;
       if (lastCommentFilterResult.result) {
-        operationsLeft -= await markStale(
-          client,
+        operationsLeft -= await githubRepo.addLabelToIssueWithComment(
           issue,
           staleMessage,
           staleLabel
         );
       } else {
         core.debug(
-          `Not match last-commented-user-filter. Skipping mark stale.`
+          `Not match last-updated-user-type. Skip marking stale.`
         );
       }
     }
 
     if (operationsLeft <= 0) {
       core.warning(
-        `performed ${args.operationsPerRun} operations, exiting to avoid rate limit`
+        `Performed ${args.operationsPerRun} operations, exiting to avoid rate limit`
       );
-      return 0;
     }
   }
-  return await processIssues(client, args, operationsLeft, page + 1);
 }
 
 function isLabeled(issue: Issue, label: string): boolean {
@@ -134,11 +129,10 @@ function wasLastUpdatedBefore(issue: Issue, num_days: number): boolean {
 }
 
 async function wasLastUpdatedByGivenUserType(
-  client: github.GitHub,
+  githubRepo: GithubRepo,
   issue: Issue,
   lastUpdatedUserType: string
 ): Promise<{ result: boolean; operations: number }> {
-  var operationNumber = 0;
   if (
     !lastUpdatedUserType ||
     Constants.AvailableLastCommentedUserTypes.indexOf(lastUpdatedUserType) ===
@@ -147,103 +141,15 @@ async function wasLastUpdatedByGivenUserType(
     core.debug(
       'Last comment user type is not set or not valid. Skip last updated user type filter.'
     );
-    return { result: true, operations: operationNumber };
+    return { result: true, operations: 0 };
   }
 
-  const events = await client.issues.listEvents({
-    owner: github.context.repo.owner,
-    repo: github.context.repo.repo,
-    issue_number: issue.number
-  });
-  operationNumber++;
-  let latestEventActor = '';
-  if (events.data.length == 0) {
-    latestEventActor = issue.user.login;
-  } else {
-    const latestEvent = events.data.reduce((prev, current) =>
-      prev.created_at > current.created_at ? prev : current
-    );
-    latestEventActor = latestEvent.actor.login;
-  }
+  const lastUpdatedByCollaborator = await githubRepo.checkIssueLastUpdatedByCollaborator(issue);
 
-  try {
-    operationNumber++;
-    const isCollaborator = await client.repos.checkCollaborator({
-      owner: github.context.repo.owner,
-      repo: github.context.repo.repo,
-      username: latestEventActor
-    });
-    if (isCollaborator.status === 204) {
-      return {
-        result:
-          lastUpdatedUserType === Constants.UserType.Collaborator
-            ? true
-            : false,
-        operations: operationNumber
-      };
-    } else {
-      core.debug(
-        'Unexpected status code from check collaborator api. Skip last updated user type filter.'
-      );
-      return {
-        result: true,
-        operations: operationNumber
-      };
-    }
-  } catch (error) {
-    if (error.status === 404) {
-      return {
-        result:
-          lastUpdatedUserType !== Constants.UserType.Collaborator
-            ? true
-            : false,
-        operations: operationNumber
-      };
-    } else {
-      throw error;
-    }
-  }
-}
-
-async function markStale(
-  client: github.GitHub,
-  issue: Issue,
-  staleMessage: string,
-  staleLabel: string
-): Promise<number> {
-  core.debug(`marking issue${issue.title} as stale`);
-
-  await client.issues.createComment({
-    owner: github.context.repo.owner,
-    repo: github.context.repo.repo,
-    issue_number: issue.number,
-    body: staleMessage
-  });
-
-  await client.issues.addLabels({
-    owner: github.context.repo.owner,
-    repo: github.context.repo.repo,
-    issue_number: issue.number,
-    labels: [staleLabel]
-  });
-
-  return 2; // operations performed
-}
-
-async function closeIssue(
-  client: github.GitHub,
-  issue: Issue
-): Promise<number> {
-  core.debug(`closing issue ${issue.title} for being stale`);
-
-  await client.issues.update({
-    owner: github.context.repo.owner,
-    repo: github.context.repo.repo,
-    issue_number: issue.number,
-    state: 'closed'
-  });
-
-  return 1; // operations performed
+  return {
+    result: lastUpdatedUserType === Constants.UserType.Collaborator ? lastUpdatedByCollaborator.result : !lastUpdatedByCollaborator.result,
+    operations: lastUpdatedByCollaborator.operations
+  };
 }
 
 function getAndValidateArgs(): Args {
@@ -266,7 +172,7 @@ function getAndValidateArgs(): Args {
     ),
     lastUpdatedUserType: core.getInput('last-updated-user-type'),
     onlyLabels: core.getInput('only-labels'),
-    eventsForCollaborators: core.getInput('include-events-from-collaborators')
+    eventsForCollaborators: core.getInput('include-events-from-collaborators').split(",")
   };
 
   for (var numberInput of [

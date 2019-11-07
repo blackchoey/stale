@@ -4,30 +4,74 @@ import { IssueEvent } from './models/issueEvent';
 
 type Issue = Octokit.IssuesListForRepoResponseItem;
 
-// Cache GitHub repo related information and perform actions 
+// Cache GitHub repo related information and perfor 
 export class GithubRepo {
     private _client: github.GitHub;
-    private _collaborators: string[] = [];
+    private _collaborators: string[];
     private _eventsToCheck: string[];
+    private _ignoreEventsFromBot: boolean = true;
 
     constructor(client: github.GitHub, eventsToCheck: string[]) {
         this._client = client;
         this._eventsToCheck = eventsToCheck;
+        this._collaborators = [];
     }
 
-    public async checkIssueLastUpdatedByCollaborator(issue: Issue, checkEvents: boolean): Promise<{ result: boolean; operations: number }> {
+    public async getAllIssuesForRepo(labels: string): Promise<{ result: Issue[], operations: number }> {
+        return this.getAllResult(async (page) => {
+            return await this._client.issues.listForRepo({
+                owner: github.context.repo.owner,
+                repo: github.context.repo.repo,
+                state: 'open',
+                per_page: 100,
+                page: page,
+                labels: labels
+            });
+        })
+    }
+
+    public async addLabelToIssueWithComment(issue: Issue, message: string, label: string): Promise<number> {
+        await this._client.issues.createComment({
+            owner: github.context.repo.owner,
+            repo: github.context.repo.repo,
+            issue_number: issue.number,
+            body: message
+        });
+
+        await this._client.issues.addLabels({
+            owner: github.context.repo.owner,
+            repo: github.context.repo.repo,
+            issue_number: issue.number,
+            labels: [label]
+        });
+
+        return 2; // operations performed
+    }
+
+    public async closeIssue(issue: Issue): Promise<number> {
+        await this._client.issues.update({
+            owner: github.context.repo.owner,
+            repo: github.context.repo.repo,
+            issue_number: issue.number,
+            state: 'closed'
+        });
+
+        return 1; // operations performed
+    }
+
+    public async checkIssueLastUpdatedByCollaborator(issue: Issue): Promise<{ result: boolean; operations: number }> {
         let operations = 0;
         operations += await this.ensureCollaboratorList();
         const allComments = await this.getAllCommentsForIssue(issue);
         operations += allComments.operations;
-        let allIssueEvents = allComments.result;
-        if (checkEvents) {
+        let issueTimeline = allComments.result;
+        if (this._eventsToCheck.length > 0) {
             const allEvents = await this.getAllEventsForIssue(issue);
             operations += allEvents.operations;
-            allIssueEvents.concat(allEvents.result);
+            issueTimeline.concat(allEvents.result);
         }
 
-        const latestEvent = allIssueEvents.reduce((prev, current) =>
+        const latestEvent = issueTimeline.reduce((prev, current) =>
             prev.eventTime > current.eventTime ? prev : current
         );
 
@@ -57,7 +101,9 @@ export class GithubRepo {
 
         let commentEvents: IssueEvent[] = [];
         for (var comment of allComments.result) {
-            commentEvents.push(new IssueEvent(comment.user.login, "commented", new Date(comment.created_at)));
+            if (!this._ignoreEventsFromBot || comment.user.type !== "Bot") {
+                commentEvents.push(new IssueEvent(comment.user.login, "commented", new Date(comment.created_at)));
+            }
         }
         return {
             result: commentEvents,
@@ -78,17 +124,19 @@ export class GithubRepo {
 
         let issueEvents: IssueEvent[] = [];
         for (var event of allEvents.result) {
-            if (this._eventsToCheck.indexOf(event.event) !== -1) {
-                switch (event.event) {
-                    case "assigned":
-                    case "unassigned":
-                        // TODO: Get actual assigner as actor when github client returns required info in the future.
-                        let actor = event.actor.login;
-                        issueEvents.push(new IssueEvent(actor, event.event, new Date(event.created_at)));
-                        break;
-                    default:
-                        issueEvents.push(new IssueEvent(event.actor.login, event.event, new Date(event.created_at)));
-                        break;
+            if (!this._ignoreEventsFromBot || event.actor.type !== "Bot") {
+                if (this._eventsToCheck.indexOf(event.event) !== -1) {
+                    switch (event.event) {
+                        case "assigned":
+                        case "unassigned":
+                            // TODO: Get actual assigner as actor when github client returns required info in the future.
+                            let actor = event.actor.login;
+                            issueEvents.push(new IssueEvent(actor, event.event, new Date(event.created_at)));
+                            break;
+                        default:
+                            issueEvents.push(new IssueEvent(event.actor.login, event.event, new Date(event.created_at)));
+                            break;
+                    }
                 }
             }
         }
